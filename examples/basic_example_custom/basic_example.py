@@ -4,6 +4,7 @@ import os
 from kikimr.public.sdk.python import client as ydb
 from concurrent.futures import TimeoutError
 import basic_example_data
+import clj
 
 FillDataQuery = """PRAGMA TablePathPrefix("{}");
 
@@ -69,39 +70,43 @@ def fill_tables_with_data(session, path):
     )
 
 
-def select_simple(session, path):
+def read(session, path, register_id):
     # new transaction in serializable read write mode
     # if query successfully completed you will get result sets.
     # otherwise exception will be raised
     result_sets = session.transaction(ydb.SerializableReadWrite()).execute(
         """
         PRAGMA TablePathPrefix("{}");
-        $format = DateTime::Format("%Y-%m-%d");
         SELECT
-            series_id,
-            title,
-            $format(DateTime::FromSeconds(CAST(DateTime::ToSeconds(DateTime::IntervalFromDays(CAST(release_date AS Int16))) AS Uint32))) AS release_date
-        FROM series
-        WHERE series_id = 1;
-        """.format(path),
+            register_id,
+            value,
+        FROM registers
+        WHERE register_id = {};
+        """.format(path, register_id),
         commit_tx=True,
     )
-    print("\n> select_simple_transaction:")
+    print("\n> read transaction:")
     for row in result_sets[0].rows:
-        print("series, id: ", row.series_id, ", title: ", row.title, ", release date: ", row.release_date)
+        print("register, id: ", row.register_id, ", value: ", row.value)
 
     return result_sets[0]
 
 
-def upsert_simple(session, path):
+def upsert(session, path, register_id, value):
+
     session.transaction().execute(
         """
         PRAGMA TablePathPrefix("{}");
-        UPSERT INTO episodes (series_id, season_id, episode_id, title) VALUES
-            (2, 6, 1, "TBD");
-        """.format(path),
+        UPSERT INTO registers (register_id, value) VALUES
+            ( {}, "{}" );
+        """.format(path, register_id, str(value)),
         commit_tx=True,
     )
+
+    print("\n> append transaction:")
+    print("register, id: ", register_id, ", value: ", value)
+
+
 
 
 def select_prepared(session, path, series_id, season_id, episode_id):
@@ -178,9 +183,9 @@ def create_tables(session, path):
     session.create_table(
         os.path.join(path, 'registers'),
         ydb.TableDescription()
-        .with_column(ydb.Column('registers_id', ydb.OptionalType(ydb.PrimitiveType.Uint64)))
+        .with_column(ydb.Column('register_id', ydb.OptionalType(ydb.PrimitiveType.Uint64)))
         .with_column(ydb.Column('value', ydb.OptionalType(ydb.PrimitiveType.Utf8)))
-        .with_primary_key('registers_id')
+        .with_primary_key('register_id')
     )
 
 
@@ -225,6 +230,13 @@ def ensure_path_exists(driver, database, path):
         driver.scheme_client.make_directory(full_path)
 
 
+def parse_command(session, path, command):
+    if command[0] == 'append':
+        upsert(session, path, command[1], command[2])
+    if command[0] == 'r':
+        read(session, path, command[1])
+
+
 def run(endpoint, database, path):
     driver_config = ydb.DriverConfig(
         endpoint, database, credentials=ydb.construct_credentials_from_environ(),
@@ -248,9 +260,14 @@ def run(endpoint, database, path):
 
         describe_table(session, full_path, "registers")
 
-        #fill_tables_with_data(session, full_path)
+        txns_path = "txns-small"
 
-        #select_simple(session, full_path)
+        with open(txns_path, "r") as txns_file:
+            transactions = clj.loads(txns_file.read())
+            for transaction in transactions:
+                for command in transaction['value']:
+                    parse_command(session, full_path, command)
+
 
         #upsert_simple(session, full_path)
 
