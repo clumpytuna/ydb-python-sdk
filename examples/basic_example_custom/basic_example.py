@@ -6,6 +6,12 @@ from concurrent.futures import TimeoutError
 import basic_example_data
 import clj
 
+StartAppendTransactionsBlock =\
+    """ 
+    DECLARE $data AS "List<Struct<key:Uint64, value:Utf8>>";
+    """
+
+
 FillDataQuery = """PRAGMA TablePathPrefix("{}");
 
 DECLARE $seriesData AS List<Struct<
@@ -276,15 +282,14 @@ def create_tables(session, path):
     )
 
 
-def get_read_query(path, register_id):
+def get_read_query(register_id):
     return """
-    PRAGMA TablePathPrefix("{}");
     SELECT
         register_id,
         value,
     FROM registers
     WHERE register_id = {};
-    """.format(path, register_id)
+    """.format(register_id)
 
 
 def get_append_query(path, register_id, value):
@@ -298,21 +303,36 @@ def get_append_query(path, register_id, value):
     """.format(path, value, register_id)
 
 
-def run_transaction(session, query):
+def run_transaction(session, query, query_arguments):
     # new transaction in serializable read write mode
     # if query successfully completed you will get result sets.
     # otherwise exception will be raised
-    result_sets = session.transaction(ydb.SerializableReadWrite()).execute(
-        query,
-        commit_tx=True,
+    prepared_query = session.prepare(query)
+
+    # Get newly created transaction id
+    tx = session.transaction(ydb.SerializableReadWrite()).begin()
+
+    # Execute data query.
+    # Transaction control settings continues active transaction (tx)
+    result_sets = tx.execute(
+        prepared_query, {
+            '$data': query_arguments
+        },
     )
+    """
     print("\n> Results:")
     for index, result in enumerate(result_sets):
         print("\n> Result #{}:".format(index))
         for row in result.rows:
             print("register, id: ", row.register_id, ", value: ", row.value)
+    """
+    tx.commit()
 
-    return result_sets
+    print("\n> Results:")
+    for index, result in enumerate(result_sets):
+        print("\n> Result #{}:".format(index))
+        for row in result.rows:
+            print("register, id: ", row.register_id, ", value: ", row.value)
 
 
 def get_query_by_command(path, command):
@@ -323,6 +343,45 @@ def get_query_by_command(path, command):
     if command[0] == 'r':
         print("\n   > read transaction:")
         return get_read_query(path, command[1])
+
+
+def get_query_from_elle_dict(path, transaction):
+    """
+    :param transaction: transaction dict in Elle format
+    :param path: a path to table we work with
+    :return: query, arguments for query: python string, python dict
+    """
+
+    query = """PRAGMA TablePathPrefix("{}");""".format(path)
+    has_append = False
+    query_arguments = []
+    for command in transaction['value']:
+        if command[0] == 'append':
+            query +=\
+                """
+                DECLARE $data AS List<Struct<register_id:Uint64, value:Utf8>>;
+                """
+    for command in sorted(transaction['value'], reverse=True):
+        if command[0] == 'r':
+            query += get_read_query(command[1])
+
+        if command[0] == 'append' and not has_append:
+            has_append = True
+            query +=\
+                """
+                $result = (SELECT d.register_id AS register_id, t.value || d.value AS value FROM AS_TABLE($data)
+                 AS d LEFT JOIN registers AS t ON t.register_id = d.register_id);
+                UPSERT INTO registers SELECT register_id, value FROM $result;
+                """
+            query_arguments.append({'register_id': command[1],
+                                    'value': ', ' + str(command[2])
+                                    })
+
+        if command[0] == 'append' and has_append:
+            query_arguments.append({'register_id': command[1],
+                                    'value': ', ' + str(command[2])
+                                    })
+    return query, query_arguments
 
 
 def run(endpoint, database, path):
@@ -354,16 +413,15 @@ def run(endpoint, database, path):
 
         with open(txns_path, "r") as txns_file:
             transactions = clj.loads(txns_file.read())
-            print(transactions)
             for transaction in transactions:
                 print("\n> Start new transaction:")
-                query = ""
+                query, query_arguments = get_query_from_elle_dict(full_path, transaction)
+                print("\n>     Query body:"
+                      "\n      {}".format(query))
+                print("\n>     Query arguments:"
+                      "\n      {}".format(query_arguments))
 
-                print(sorted(transaction['value'], reverse=True))
-                for command in sorted(transaction['value'], reverse=True):
-                    query += get_query_by_command(full_path, command)
-                print(query)
-                run_transaction(session, query)
+                run_transaction(session, query, query_arguments)
 
 
         #upsert_simple(session, full_path)

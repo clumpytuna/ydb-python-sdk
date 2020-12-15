@@ -1,11 +1,8 @@
-({:type :invoke, :f :txn, :value [[:append 49 1] [:append 48 1]]}
- {:type :invoke, :f :txn, :value [[:r 48 nil]]}
+({:type :invoke, :f :txn, :value [[:r 48 nil]]}
  {:type :invoke, :f :txn, :value [[:append 50 1] [:r 48 nil]]}
  {:type :invoke, :f :txn, :value [[:r 46 nil]]}
  {:type :invoke, :f :txn, :value [[:r 48 nil]]}
  {:type :invoke, :f :txn, :value [[:r 51 nil] [:append 47 1]]}
- {:type :invoke, :f :txn, :value [[:append 46 1]]}
- {:type :invoke, :f :txn, :value [[:append 51 1]]}
  {:type :invoke, :f :txn, :value [[:r 43 nil] [:r 44 nil]]}
  {:type :invoke, :f :txn, :value [[:r 51 nil]]}
  {:type :invoke, :f :txn, :value [[:append 42 1] [:r 52 nil]]}
