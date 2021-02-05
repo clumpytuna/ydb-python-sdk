@@ -5,6 +5,8 @@ from kikimr.public.sdk.python import client as ydb
 from concurrent.futures import TimeoutError
 import basic_example_data
 import clj
+import edn_format
+import time
 
 StartAppendTransactionsBlock =\
     """ 
@@ -195,7 +197,7 @@ def read(session, path, register_id):
         PRAGMA TablePathPrefix("{}");
         SELECT
             register_id,
-            value,
+            value
         FROM registers
         WHERE register_id = {};
         """.format(path, register_id),
@@ -235,12 +237,12 @@ def upsert(session, path, register_id, value):
 
 
 def insert_preparation(session, path, number_of_keys):
+    print("\n> Prepare table: ...")
     query = """
             PRAGMA TablePathPrefix("{}");
             UPSERT INTO registers
             (
-                register_id,
-                value
+                register_id
             )
             VALUES
             """.format(path)
@@ -248,45 +250,73 @@ def insert_preparation(session, path, number_of_keys):
     for i in range(1, number_of_keys + 1):
         if i == number_of_keys:
             query += """
+                    (
+                        {}
+                    );
+                    """.format(i)
+            continue
+        if i % 90 == 0:
+            query += """
                      (
-                        {},
-                        "0"
+                        {}
                      );
                      """.format(i)
+            try:
+                session.transaction().execute(
+                    query,
+                    commit_tx=True,
+                )
+            except ydb.issues.Overloaded:
+                time.sleep(0.1)
+                session.transaction().execute(
+                    query,
+                    commit_tx=True,
+                )
+
+            query = """
+            PRAGMA TablePathPrefix("{}");
+            UPSERT INTO registers
+            (
+                register_id
+            )
+            VALUES
+            """.format(path)
             continue
         query += """
                  (
-                    {},
-                    "0"
+                    {}
                  ),
                  """.format(i)
-
-    session.transaction().execute(
-        query,
-        commit_tx=True,
-    )
-
-    print("\n> initialize insert transaction:")
+    try:
+        session.transaction().execute(
+            query,
+            commit_tx=True,
+        )
+    except ydb.issues.Overloaded:
+        time.sleep(0.1)
+        session.transaction().execute(
+            query,
+            commit_tx=True,
+        )
 
 
 def create_tables(session, path):
     # Creating registers table
-    session.drop_table(os.path.join(path, 'registers'))
-
-    session.create_table(
+    print(session.drop_table(os.path.join(path, 'registers')))
+    print(session.create_table(
         os.path.join(path, 'registers'),
         ydb.TableDescription()
         .with_column(ydb.Column('register_id', ydb.OptionalType(ydb.PrimitiveType.Uint64)))
         .with_column(ydb.Column('value', ydb.OptionalType(ydb.PrimitiveType.Utf8)))
         .with_primary_key('register_id')
-    )
+    ))
 
 
 def get_read_query(register_id):
     return """
     SELECT
         register_id,
-        value,
+        value
     FROM registers
     WHERE register_id = {};
     """.format(register_id)
@@ -303,12 +333,11 @@ def get_append_query(path, register_id, value):
     """.format(path, value, register_id)
 
 
-def run_transaction(session, query, query_arguments):
+def _run_transaction(session, query, query_arguments):
     # new transaction in serializable read write mode
     # if query successfully completed you will get result sets.
     # otherwise exception will be raised
     prepared_query = session.prepare(query)
-
     # Get newly created transaction id
     tx = session.transaction(ydb.SerializableReadWrite()).begin()
 
@@ -319,13 +348,6 @@ def run_transaction(session, query, query_arguments):
             '$data': query_arguments
         },
     )
-    """
-    print("\n> Results:")
-    for index, result in enumerate(result_sets):
-        print("\n> Result #{}:".format(index))
-        for row in result.rows:
-            print("register, id: ", row.register_id, ", value: ", row.value)
-    """
     tx.commit()
 
     print("\n> Results:")
@@ -333,6 +355,18 @@ def run_transaction(session, query, query_arguments):
         print("\n> Result #{}:".format(index))
         for row in result.rows:
             print("register, id: ", row.register_id, ", value: ", row.value)
+
+    return result_sets
+
+
+def run_transaction(session, query, query_arguments):
+    try:
+        return _run_transaction(session, query, query_arguments)
+    except ydb.issues.Overloaded:
+        time.sleep(0.1)
+        return _run_transaction(session, query, query_arguments)
+    except ydb.issues.NotFound:
+        return _run_transaction(session, query, query_arguments)
 
 
 def get_query_by_command(path, command):
@@ -361,12 +395,16 @@ def get_query_from_elle_dict(path, transaction):
                 """
                 DECLARE $data AS List<Struct<register_id:Uint64, value:Utf8>>;
                 """
+            break
     for command in sorted(transaction['value'], reverse=True):
         if command[0] == 'r':
+            query += """PRAGMA TablePathPrefix("{}");""".format(path)
             query += get_read_query(command[1])
+            continue
 
         if command[0] == 'append' and not has_append:
             has_append = True
+            query += """PRAGMA TablePathPrefix("{}");""".format(path)
             query +=\
                 """
                 $result = (SELECT d.register_id AS register_id, t.value || d.value AS value FROM AS_TABLE($data)
@@ -374,14 +412,99 @@ def get_query_from_elle_dict(path, transaction):
                 UPSERT INTO registers SELECT register_id, value FROM $result;
                 """
             query_arguments.append({'register_id': command[1],
-                                    'value': ', ' + str(command[2])
+                                    'value': ',' + str(command[2])
                                     })
+            continue
 
         if command[0] == 'append' and has_append:
             query_arguments.append({'register_id': command[1],
-                                    'value': ', ' + str(command[2])
+                                    'value': ',' + str(command[2])
                                     })
+            continue
     return query, query_arguments
+
+
+def fix_output(output):
+    return output.replace('"type" "ok"', ':type :ok,')\
+        .replace('"f" "txn" ', ' :f :txn ,')\
+        .replace('"value"', ':value')\
+        .replace('"r"', ':r')\
+        .replace('"append"', ':append')\
+        .replace('[nil]', 'nil')
+
+
+def transform(x):
+    if x == 'None':
+        return None
+    else:
+        return int(x)
+
+
+def divide_transactions_in_batches(transactions, batches_number):
+    """
+    :param transactions: array of jsons
+    example: [{'type': 'invoke', 'f': 'txn', 'value': [['r', 49, None], ['append', 47, 1], ['append', 49, 1], ['r', 48, None], ['r', 49, None], ['append', 45, 1]]}, {'type': 'invoke', 'f': 'txn', 'value': [['r', 46, None], ['append', 49, 2], ['r', 49, None], ['r', 48, None], ['r', 43, None]]}]
+    :param batches_number: number of batches array to break in
+    :return: array of transactions (array of arrays of jsons)
+    """
+    avg = len(transactions) / float(batches_number)
+    batches = []
+    last = 0.0
+
+    while last < len(transactions):
+        batches.append(transactions[int(last):int(last + avg)])
+        last += avg
+
+    return batches
+
+
+def get_transactions_by_path(path):
+    """
+    :param path: path to transactions in ELLE format
+    :return: return content of the file
+    """
+    with open(path, "r") as txns_file:
+        return clj.loads(txns_file.read())
+
+
+def run_transactions_batch(full_path, session, transactions_batch):
+    """
+    :param full_path: full path to DB
+    :param session: DB session
+    :param transactions_batch: array of jsons representing transaction
+    :return: return ready transactions set filled with returned values
+    """
+    for index, transaction in enumerate(transactions_batch):
+        print("\n> Start new transaction:")
+        query, query_arguments = get_query_from_elle_dict(full_path, transaction)
+        print("\n>     Query body:"
+              "\n      {}".format(query))
+        print("\n>     Query arguments:"
+              "\n      {}".format(query_arguments))
+        result_sets = run_transaction(session, query, query_arguments)
+
+        if result_sets is not None:
+            for jndex, command in enumerate(sorted(transaction['value'], reverse=True)):
+                if command[0] == 'append':
+                    break
+                else:
+                    for row in result_sets[jndex].rows:
+                        x = str(row.value).split(",")
+                        command[2] = list(map(transform, x))
+            transaction['type'] = 'ok'
+    return transactions_batch
+
+
+def dump_transactions_batch(filepath, transactions_batch):
+    """
+    :param filepath: path to save transactions file
+    :param transactions_batch: ready transactions
+    :return: just write transaction to disk formatted in Elle way
+    """
+    with open(filepath + '-ready', "w") as txns_output_file:
+        for transaction in transactions_batch:
+            transaction['value'] = sorted(transaction['value'], reverse=True)
+        txns_output_file.writelines(fix_output(edn_format.dumps(transactions_batch)))
 
 
 def run(endpoint, database, path):
@@ -404,24 +527,48 @@ def run(endpoint, database, path):
         full_path = os.path.join(database, path)
 
         create_tables(session, full_path)
-
         describe_table(session, full_path, "registers")
 
-        insert_preparation(session, full_path, 90)
+        insert_preparation(session, full_path, 1000)
 
-        txns_path = "txns-short-small"
+        txns_path = "results/txns-short"
 
+        transactions = get_transactions_by_path(txns_path)
+        transactions_batches = divide_transactions_in_batches(transactions, 5)
+        for batch_number, batch in enumerate(transactions_batches):
+            proccessed_batch = run_transactions_batch(full_path, session, batch)
+            dump_transactions_batch(txns_path + str(batch_number), proccessed_batch)
+
+        """
         with open(txns_path, "r") as txns_file:
             transactions = clj.loads(txns_file.read())
-            for transaction in transactions:
+            for transactions in divide_transactions_in_batches(transactions, 1):
+                print(transactions)
+                print()
+            exit(0)
+            for index, transaction in enumerate(transactions):
                 print("\n> Start new transaction:")
                 query, query_arguments = get_query_from_elle_dict(full_path, transaction)
                 print("\n>     Query body:"
                       "\n      {}".format(query))
                 print("\n>     Query arguments:"
                       "\n      {}".format(query_arguments))
-
-                run_transaction(session, query, query_arguments)
+                result_sets = run_transaction(session, query, query_arguments)
+                if result_sets is not None:
+                    for jndex, command in enumerate(sorted(transaction['value'], reverse=True)):
+                        if command[0] == 'append':
+                            break
+                        else:
+                            for row in result_sets[jndex].rows:
+                                x = str(row.value).split(",")
+                                command[2] = list(map(transform, x))
+                    transaction['type'] = 'ok'
+            with open(txns_path + '-ready', "w") as txns_output_file:
+                for transaction in transactions:
+                    transaction['value'] = sorted(transaction['value'], reverse=True)
+                print(fix_output(edn_format.dumps(transactions)))
+                txns_output_file.writelines(fix_output(edn_format.dumps(transactions)))
+        """
 
 
         #upsert_simple(session, full_path)
