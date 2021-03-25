@@ -2,6 +2,7 @@
 import os
 
 from kikimr.public.sdk.python import client as ydb
+from kikimr.public.sdk.python.client.issues import Aborted
 from concurrent.futures import TimeoutError
 import basic_example_data
 import clj
@@ -363,7 +364,7 @@ def run_transaction(session, query, query_arguments):
     try:
         return _run_transaction(session, query, query_arguments)
     except ydb.issues.Overloaded:
-        time.sleep(0.1)
+        time.sleep(0.2)
         return _run_transaction(session, query, query_arguments)
     except ydb.issues.NotFound:
         return _run_transaction(session, query, query_arguments)
@@ -481,7 +482,13 @@ def run_transactions_batch(full_path, session, transactions_batch):
               "\n      {}".format(query))
         print("\n>     Query arguments:"
               "\n      {}".format(query_arguments))
-        result_sets = run_transaction(session, query, query_arguments)
+        while True:
+            try:
+                result_sets = run_transaction(session, query, query_arguments)
+            except Aborted:
+                continue
+            else:
+                break
 
         if result_sets is not None:
             for jndex, command in enumerate(sorted(transaction['value'], reverse=True)):
@@ -526,7 +533,7 @@ def run(endpoint, database, path):
 
         full_path = os.path.join(database, path)
 
-        create_tables(session, full_path)
+        #create_tables(session, full_path)
         describe_table(session, full_path, "registers")
 
         insert_preparation(session, full_path, 1000)
@@ -539,13 +546,11 @@ def run(endpoint, database, path):
             proccessed_batch = run_transactions_batch(full_path, session, batch)
             dump_transactions_batch(txns_path + str(batch_number), proccessed_batch)
 
+
+
         """
         with open(txns_path, "r") as txns_file:
             transactions = clj.loads(txns_file.read())
-            for transactions in divide_transactions_in_batches(transactions, 1):
-                print(transactions)
-                print()
-            exit(0)
             for index, transaction in enumerate(transactions):
                 print("\n> Start new transaction:")
                 query, query_arguments = get_query_from_elle_dict(full_path, transaction)
@@ -568,8 +573,8 @@ def run(endpoint, database, path):
                     transaction['value'] = sorted(transaction['value'], reverse=True)
                 print(fix_output(edn_format.dumps(transactions)))
                 txns_output_file.writelines(fix_output(edn_format.dumps(transactions)))
-        """
 
+        """
 
         #upsert_simple(session, full_path)
 
