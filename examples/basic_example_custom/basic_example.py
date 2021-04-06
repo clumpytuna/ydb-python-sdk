@@ -5,7 +5,7 @@ from kikimr.public.sdk.python import client as ydb
 from kikimr.public.sdk.python.client.issues import Aborted
 from concurrent.futures import TimeoutError
 import basic_example_data
-import clj
+from .clj_l import loads
 import edn_format
 import time
 
@@ -390,6 +390,7 @@ def get_query_from_elle_dict(path, transaction):
     query = """PRAGMA TablePathPrefix("{}");""".format(path)
     has_append = False
     query_arguments = []
+    print(type(transaction))
     for command in transaction['value']:
         if command[0] == 'append':
             query +=\
@@ -465,7 +466,14 @@ def get_transactions_by_path(path):
     :return: return content of the file
     """
     with open(path, "r") as txns_file:
-        return clj.loads(txns_file.read())
+        """.replace('Keyword(value)', 'value')\
+        .replace('Keyword(invoke)', 'invoke')\
+        .replace('Keyword(f)', 'f')\
+        .replace('Keyword(type)', 'type')\
+        .replace('Keyword(txn)', 'txn')\
+        .replace('Keyword(r)', 'r')\
+        """
+        return edn_format.loads(txns_file.read())
 
 
 def run_transactions_batch(full_path, session, transactions_batch):

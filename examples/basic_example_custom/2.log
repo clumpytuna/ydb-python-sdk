@@ -1,0 +1,9 @@
+
+> describe table: registers
+column, name: register_id , Uint64
+column, name: value , Utf8
+
+> Prepare table: ...
+
+> Start new transaction:
+<class 'edn_format.immutable_dict.ImmutableDict'>
