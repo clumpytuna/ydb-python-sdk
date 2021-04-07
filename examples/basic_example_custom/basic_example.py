@@ -473,7 +473,7 @@ def get_transactions_by_path(path):
         .replace('Keyword(txn)', 'txn')\
         .replace('Keyword(r)', 'r')\
         """
-        return edn_format.loads(txns_file.read())
+        return loads(txns_file.read())
 
 
 def run_transactions_batch(full_path, session, transactions_batch):
