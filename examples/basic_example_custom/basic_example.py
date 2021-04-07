@@ -9,6 +9,7 @@ from clj_l import loads
 import edn_format
 import time
 
+
 StartAppendTransactionsBlock =\
     """ 
     DECLARE $data AS "List<Struct<key:Uint64, value:Utf8>>";
