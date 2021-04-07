@@ -5,7 +5,7 @@ from kikimr.public.sdk.python import client as ydb
 from kikimr.public.sdk.python.client.issues import Aborted
 from concurrent.futures import TimeoutError
 import basic_example_data
-from .clj_l import loads
+from clj_l import loads
 import edn_format
 import time
 
