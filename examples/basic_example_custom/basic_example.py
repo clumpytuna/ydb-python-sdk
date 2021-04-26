@@ -555,6 +555,7 @@ def run(endpoint, database, path):
             proccessed_batch = run_transactions_batch(full_path, session, batch)
             dump_transactions_batch(txns_path + str(batch_number), proccessed_batch)
 
+        
 
 
         """
