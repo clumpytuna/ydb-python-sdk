@@ -547,6 +547,8 @@ def build_transactions(client_id, num_clients, path):
                 range_end = len(transactions) - 1
             return transactions[range_start:range_end]
 
+def send_transactions(transactions):
+    pass
 
 def run(endpoint, database, path, client_id, num_clients, transactions_path):
 
@@ -569,9 +571,8 @@ def run(endpoint, database, path, client_id, num_clients, transactions_path):
         full_path = os.path.join(database, path)
 
         transactions = build_transactions(client_id, num_clients, transactions_path)
-        transactions_batches = divide_transactions_in_batches(transactions, 1)
-        for batch_number, batch in enumerate(transactions_batches):
-            proccessed_batch = run_transactions_batch(full_path, session, batch)
-            dump_transactions_batch(transactions_path + str(batch_number), proccessed_batch)
+        proccessed_transactions = run_transactions_batch(full_path, session, transactions)
+        send_transactions(proccessed_transactions)
+
 
 
