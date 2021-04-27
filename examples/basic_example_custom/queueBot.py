@@ -25,8 +25,10 @@ def main():
         QueueUrl=queue_url,
         MaxNumberOfMessages=10,
         VisibilityTimeout=60,
-        WaitTimeSeconds=20
+        WaitTimeSeconds=20,
+
     ).get('Messages')
+
     for msg in messages:
         print('Received message: "{}"'.format(msg.get('Body')))
 
@@ -41,6 +43,7 @@ def main():
     # Delete queue
     client.delete_queue(QueueUrl=queue_url)
     print('Successfully deleted queue')
+
 
 if __name__ == '__main__':
     main()

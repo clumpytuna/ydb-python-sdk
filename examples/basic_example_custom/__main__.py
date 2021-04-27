@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import argparse
 import basic_example
+import client_node
 import logging
 
 
@@ -11,6 +12,9 @@ if __name__ == '__main__':
     parser.add_argument("-d", "--database", required=True, help="Name of the database to use")
     parser.add_argument("-e", "--endpoint", required=True, help="Endpoint url to use")
     parser.add_argument("-p", "--path", default='')
+    parser.add_argument("-pt", "--transactions_path", required=True)
+    parser.add_argument("-id", "--client-id", required=True)
+    parser.add_argument("-n", '--clients-num', required=True)
     parser.add_argument("-v", '--verbose', default=False, action='store_true')
 
     args = parser.parse_args()
@@ -20,8 +24,19 @@ if __name__ == '__main__':
         logger.setLevel(logging.INFO)
         logger.addHandler(logging.StreamHandler())
 
+    client_node.run(
+        args.endpoint,
+        args.database,
+        args.path,
+        args.client_id,
+        args.clients_num,
+        args.transactions_path
+    )
+
+    """
     basic_example.run(
         args.endpoint,
         args.database,
         args.path,
     )
+    """
