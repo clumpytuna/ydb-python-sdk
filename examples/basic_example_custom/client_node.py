@@ -547,8 +547,10 @@ def build_transactions(client_id, num_clients, path):
                 range_end = len(transactions) - 1
             return transactions[range_start:range_end]
 
+
 def send_transactions(transactions):
     pass
+
 
 def run(endpoint, database, path, client_id, num_clients, transactions_path):
 
