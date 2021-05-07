@@ -8,6 +8,7 @@ import basic_example_data
 from clj_l import loads
 import edn_format
 import time
+import boto3
 
 StartAppendTransactionsBlock = \
     """ 
@@ -548,6 +549,83 @@ def build_transactions(client_id, num_clients, path):
             return transactions[range_start:range_end]
 
 
+def send_message(queue_url, client_id):
+    client = boto3.client(
+        service_name='sqs',
+        endpoint_url='https://message-queue.api.cloud.yandex.net',
+        region_name='ru-central1'
+    )
+
+    client.send_message(QueueUrl=queue_url,
+                        MessageBody=str(client_id),
+                        MessageGroupId=str(client_id),
+                        MessageDeduplicationId='default')
+
+
+def create_queue(name, attributes=None):
+    """
+    Creates an Amazon SQS queue.
+
+    Usage is shown in usage_demo at the end of this module.
+
+    :param client: instance of boto3 client
+    :param name: The name of the queue. This is part of the URL assigned to the queue.
+    :param attributes: The attributes of the queue, such as maximum message size or
+                       whether it's a FIFO queue.
+    :return: A Queue object that contains metadata about the queue and that can be used
+             to perform queue operations like sending and receiving messages.
+    """
+    if not attributes:
+        attributes = {}
+
+    try:
+
+        client = boto3.client(
+            service_name='sqs',
+            endpoint_url='https://message-queue.api.cloud.yandex.net',
+            region_name='ru-central1'
+        )
+
+        queue = client.create_queue(
+            QueueName=name,
+            Attributes=attributes
+        )
+    except Exception as error:
+        print("Couldn't create queue named '%s'.", name)
+        raise error
+    else:
+        return queue
+
+
+def barrier(client_id):
+
+    client = boto3.client(
+        service_name='sqs',
+        endpoint_url='https://message-queue.api.cloud.yandex.net',
+        region_name='ru-central1'
+    )
+
+    queue_name = "queue.fifo"
+
+    queue_url = client.get_queue_url(QueueName=queue_name).get('QueueUrl')
+
+    while True:
+        messages = client.receive_message(
+            QueueUrl=queue_url,
+            MaxNumberOfMessages=1,
+            WaitTimeSeconds=20,
+            AttributeNames=[
+                 'MessageGroupId'
+            ]
+        ).get('Messages')
+
+        if messages is not None:
+            for message in messages:
+                print(message)
+                if message["Attributes"]["MessageGroupId"] == str(client_id):
+                    return
+
+
 def send_transactions(transactions):
     pass
 
@@ -571,6 +649,10 @@ def run(endpoint, database, path, client_id, num_clients, transactions_path):
         session = driver.table_client.session().create()
         ensure_path_exists(driver, database, path)
         full_path = os.path.join(database, path)
+
+        queue = create_queue("queue.fifo", attributes={"FifoQueue": "true", "VisibilityTimeout": "0"})
+        send_message(queue.get("QueueUrl"), client_id)
+        barrier(client_id)
 
         transactions = build_transactions(client_id, num_clients, transactions_path)
         proccessed_transactions = run_transactions_batch(full_path, session, transactions)
