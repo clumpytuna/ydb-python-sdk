@@ -623,6 +623,7 @@ def get_queue_by_name(name, attributes=None):
     else:
         return queue
 
+
 def barrier(client_id):
 
     client = boto3.client(
@@ -681,12 +682,6 @@ def run(endpoint, database, path, client_id, num_clients, transactions_path):
         print("Preparations is over")
 
         queue = create_queue("queue.fifo", attributes={"FifoQueue": "true", "VisibilityTimeout": "0"})
-        send_message(queue.get("QueueUrl"), client_id)
-        barrier(client_id)
 
-        transactions = build_transactions(client_id, num_clients, transactions_path)
-        proccessed_transactions = run_transactions_batch(full_path, session, transactions)
-        send_transactions(proccessed_transactions)
-        dump_transactions_batch(transactions_path + "-" + str(client_id) + "-" + str(num_clients), proccessed_transactions)
-
-
+        for client in range(1, num_clients + 1):
+            send_message(queue.get("QueueUrl"), client)
