@@ -240,6 +240,7 @@ def upsert(session, path, register_id, value):
 
 def insert_preparation(session, path, number_of_keys):
     print("\n> Prepare table: ...")
+    print("> Table is successfully prepared: {} inserts committed".format(number_of_keys))
     query = """
             PRAGMA TablePathPrefix("{}");
             UPSERT INTO registers
@@ -309,14 +310,16 @@ def insert_preparation(session, path, number_of_keys):
 
 def create_tables(session, path):
     # Creating registers table
-    print(session.drop_table(os.path.join(path, 'registers')))
-    print(session.create_table(
+    print("\n> Start DB preparation ...")
+    print("> Create table: ...")
+    session.drop_table(os.path.join(path, 'registers'))
+    session.create_table(
         os.path.join(path, 'registers'),
         ydb.TableDescription()
             .with_column(ydb.Column('register_id', ydb.OptionalType(ydb.PrimitiveType.Uint64)))
             .with_column(ydb.Column('value', ydb.OptionalType(ydb.PrimitiveType.Utf8)))
             .with_primary_key('register_id')
-    ))
+    )
 
 
 def get_read_query(register_id):
@@ -615,13 +618,13 @@ def get_queue_by_name(name, attributes=None):
             region_name='ru-central1'
         )
 
-        queue = client.get_queue_url(QueueName=name)
+        queue_url = client.get_queue_url(QueueName=name).get('QueueUrl')
 
     except Exception as error:
         print("Couldn't get queue named '%s'.", name)
         raise error
     else:
-        return queue
+        return queue_url
 
 
 def barrier(client_id):
@@ -677,11 +680,15 @@ def run(endpoint, database, path, client_id, num_clients, transactions_path):
         ensure_path_exists(driver, database, path)
         full_path = os.path.join(database, path)
 
+        print("\n> Start testing")
+
         create_tables(session, full_path)
         insert_preparation(session, full_path, 1000)
-        print("Preparations is over")
+        print("> DB preparations is over!")
 
-        queue = create_queue("queue.fifo", attributes={"FifoQueue": "true", "VisibilityTimeout": "0"})
+        print("\n> Run {} clients".format(num_clients))
+        #queue = create_queue("queue.fifo", attributes={"FifoQueue": "true", "VisibilityTimeout": "0"})
 
-        for client in range(1, num_clients + 1):
-            send_message(queue.get("QueueUrl"), client)
+        #for client in range(0, int(num_clients)):
+       #     send_message(queue.get("QueueUrl"), client)
+       #     print("Client: " + str(client) + " can start")

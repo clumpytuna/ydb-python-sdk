@@ -357,12 +357,12 @@ def _run_transaction(session, query, query_arguments):
     )
     tx.commit()
 
-    print("\n> Results:")
-    for index, result in enumerate(result_sets):
-        print("\n> Result #{}:".format(index))
-        for row in result.rows:
-            print("register_id: ", row.register_id, ", value: ", row.value)
-            print(row)
+    #print("\n> Results:")
+    #for index, result in enumerate(result_sets):
+        #print("\n> Result #{}:".format(index))
+        #for row in result.rows:
+            #print("register_id: ", row.register_id, ", value: ", row.value)
+            #print(row)
 
     return result_sets
 
@@ -397,7 +397,6 @@ def get_query_from_elle_dict(path, transaction):
     query = """PRAGMA TablePathPrefix("{}");""".format(path)
     has_append = False
     query_arguments = []
-    print(type(transaction))
     for command in transaction['value']:
         if command[0] == 'append':
             query += \
@@ -444,7 +443,7 @@ def fix_output(output):
 
 def transform(x):
     if x == 'None' or x == '':
-        return None
+        return
     else:
         return int(x)
 
@@ -490,13 +489,14 @@ def run_transactions_batch(full_path, session, transactions_batch):
     :param transactions_batch: array of jsons representing transaction
     :return: return ready transactions set filled with returned values
     """
+
     for index, transaction in enumerate(transactions_batch):
-        print("\n> Start new transaction:")
+        # print("\n> Start new transaction:")
         query, query_arguments = get_query_from_elle_dict(full_path, transaction)
-        print("\n>     Query body:"
-              "\n      {}".format(query))
-        print("\n>     Query arguments:"
-              "\n      {}".format(query_arguments))
+        # print("\n>     Query body:"
+        #     "\n      {}".format(query))
+        # print("\n>     Query arguments:"
+        #      "\n      {}".format(query_arguments))
         while True:
             try:
                 result_sets = run_transaction(session, query, query_arguments)
@@ -511,7 +511,7 @@ def run_transactions_batch(full_path, session, transactions_batch):
                     break
                 else:
                     for row in result_sets[jndex].rows:
-                        x = str(row.value).split(",")
+                        x = str(row.value).split(",")[1:]
                         command[2] = list(map(transform, x))
             transaction['type'] = 'ok'
     return transactions_batch
@@ -615,25 +615,22 @@ def get_queue_by_name(name, attributes=None):
             region_name='ru-central1'
         )
 
-        queue = client.get_queue_url(QueueName=name)
+        queue_url = client.get_queue_url(QueueName=name).get('QueueUrl')
 
     except Exception as error:
         print("Couldn't get queue named '%s'.", name)
         raise error
     else:
-        return queue
+        return queue_url
 
-def barrier(client_id):
+
+def barrier(queue_url, client_id):
 
     client = boto3.client(
         service_name='sqs',
         endpoint_url='https://message-queue.api.cloud.yandex.net',
         region_name='ru-central1'
     )
-
-    queue_name = "queue.fifo"
-
-    queue_url = client.get_queue_url(QueueName=queue_name).get('QueueUrl')
 
     while True:
         messages = client.receive_message(
@@ -647,7 +644,6 @@ def barrier(client_id):
 
         if messages is not None:
             for message in messages:
-                print(message)
                 if message["Attributes"]["MessageGroupId"] == str(client_id):
                     return
 
@@ -676,17 +672,20 @@ def run(endpoint, database, path, client_id, num_clients, transactions_path):
         ensure_path_exists(driver, database, path)
         full_path = os.path.join(database, path)
 
-        create_tables(session, full_path)
-        insert_preparation(session, full_path, 1000)
-        print("Preparations is over")
-
-        queue = create_queue("queue.fifo", attributes={"FifoQueue": "true", "VisibilityTimeout": "0"})
-        send_message(queue.get("QueueUrl"), client_id)
-        barrier(client_id)
+        # queue_url = get_queue_by_name("queue.fifo")
+        # barrier(queue_url, client_id)
 
         transactions = build_transactions(client_id, num_clients, transactions_path)
+
+        print("\n> Start transactions execution")
+        print("\n> Transactions to run: {}".format(len(transactions)))
+        print("\n> Running ... ".format(len(transactions)))
         proccessed_transactions = run_transactions_batch(full_path, session, transactions)
+
+        print("\n> Transaction execution is over:")
+        print("> Run {} transactions".format(len(proccessed_transactions)))
+        print(">     {} transactions committed".format(len(proccessed_transactions)))
+
         send_transactions(proccessed_transactions)
         dump_transactions_batch(transactions_path + "-" + str(client_id) + "-" + str(num_clients), proccessed_transactions)
-
 
